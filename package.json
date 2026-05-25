@@ -31,7 +31,7 @@
     "docker:build": "docker-compose build",
     "setup": "node scripts/setup.js",
     "clean": "turbo run clean && rm -rf node_modules",
-    "format": "prettier --write "**/*.{ts,tsx,md,json}""
+    "format": "prettier --write '**/*.{ts,tsx,md,json}'"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
