@@ -1,0 +1,977 @@
+// ═══════════════════════════════════════════════════
+// Bluebird Online — Database Schema
+// Prisma ORM v6+ | PostgreSQL 15+
+// ═══════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+  previewFeatures = ["postgresqlExtensions", "fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  extensions = [pgcrypto, uuid_ossp]
+}
+
+// ─────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────
+
+enum UserType {
+  CUSTOMER
+  STAFF
+  SYSTEM
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+  PENDING_PAYMENT
+}
+
+enum StaffRole {
+  SUPER_ADMIN
+  ADMIN
+  NOC_ENGINEER
+  TECHNICIAN
+  BILLING_MANAGER
+  SALES_MANAGER
+  SUPPORT_AGENT
+  FIELD_ENGINEER
+}
+
+enum CustomerType {
+  RESIDENTIAL
+  BUSINESS
+  CORPORATE
+  ENTERPRISE
+}
+
+enum InternetPackageType {
+  FTTH
+  FTTB
+  WIRELESS
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PENDING_ACTIVATION
+  SUSPENDED
+  TERMINATED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  PARTIALLY_PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  BKASH
+  NAGAD
+  SSLCOMMERZ
+  BANK_TRANSFER
+  CASH
+  CHEQUE
+  CARD
+  MOBILE_BANKING
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+  EMERGENCY
+}
+
+enum TicketCategory {
+  NO_INTERNET
+  SLOW_SPEED
+  BILLING_ISSUE
+  PACKAGE_CHANGE
+  TECHNICAL_SUPPORT
+  INSTALLATION
+  COMPLAINT
+  GENERAL_INQUIRY
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  WARNING
+  MAINTENANCE
+  DECOMMISSIONED
+}
+
+enum OnuStatus {
+  ONLINE
+  OFFLINE
+  DYING_GASP
+  LOS
+  UNKNOWN
+}
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  PUSH
+  TELEGRAM
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
+
+enum CoverageStatus {
+  ACTIVE
+  PLANNED
+  UNDER_CONSTRUCTION
+  COMING_SOON
+}
+
+enum MaintenanceType {
+  SCHEDULED
+  EMERGENCY
+  UPGRADE
+  FIBER_REPAIR
+}
+
+enum LogAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  PAYMENT
+  REBOOT
+  CONFIG_CHANGE
+}
+
+// ─────────────────────────────────────────────────
+// CORE: USERS & AUTHENTICATION
+// ─────────────────────────────────────────────────
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  phone         String?    @unique
+  passwordHash  String     @map("password_hash")
+  userType      UserType   @map("user_type")
+  status        UserStatus @default(PENDING_VERIFICATION)
+
+  // Profile
+  firstName     String?    @map("first_name")
+  lastName      String?    @map("last_name")
+  avatarUrl     String?    @map("avatar_url")
+  language      String     @default("bn")  // bn = Bangla, en = English
+  timezone      String     @default("Asia/Dhaka")
+
+  // Security
+  emailVerified     Boolean   @default(false) @map("email_verified")
+  phoneVerified     Boolean   @default(false) @map("phone_verified")
+  twoFactorEnabled  Boolean   @default(false) @map("two_factor_enabled")
+  twoFactorSecret   String?   @map("two_factor_secret")
+
+  // Metadata
+  lastLoginAt   DateTime?  @map("last_login_at")
+  lastLoginIp   String?    @map("last_login_ip")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  deletedAt     DateTime?  @map("deleted_at")
+
+  // Relations
+  customer      Customer?
+  staff         Staff?
+  sessions      Session[]
+  loginHistory  LoginHistory[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([userType, status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model Session {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  token         String    @unique
+  refreshToken  String    @unique @map("refresh_token")
+
+  // Device tracking
+  deviceId      String?   @map("device_id")
+  deviceName    String?   @map("device_name")
+  deviceType    String?   @map("device_type")  // mobile, desktop, tablet
+  os            String?
+  browser       String?
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  location      String?   // GeoIP city
+
+  // Timing
+  expiresAt     DateTime  @map("expires_at")
+  refreshExpiresAt DateTime @map("refresh_expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastUsedAt    DateTime  @default(now()) @map("last_used_at")
+
+  // Relations
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([refreshToken])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model LoginHistory {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  action      String   // LOGIN, LOGOUT, FAILED_ATTEMPT, PASSWORD_CHANGE
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  deviceInfo  String?  @map("device_info")
+  location    String?
+  success     Boolean  @default(true)
+  failureReason String? @map("failure_reason")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([ipAddress])
+  @@map("login_history")
+}
+
+// ─────────────────────────────────────────────────
+// CUSTOMER MANAGEMENT
+// ─────────────────────────────────────────────────
+
+model Customer {
+  id                String       @id @default(uuid())
+  userId            String       @unique @map("user_id")
+  customerCode      String       @unique @map("customer_code")  // BB-1024
+
+  // Identity
+  type              CustomerType @default(RESIDENTIAL)
+  nidNumber         String?      @map("nid_number")  // Bangladesh NID
+  tradeLicense      String?      @map("trade_license")
+
+  // Address
+  address           String?
+  area              String?
+  zone              String?
+  city              String       @default("Dhaka")
+  postalCode        String?      @map("postal_code")
+  latitude          Float?
+  longitude         Float?
+
+  // Installation
+  installationDate  DateTime?    @map("installation_date")
+  technicianId      String?      @map("technician_id")
+
+  // Billing
+  billingCycle      Int          @default(1) @map("billing_cycle")  // day of month
+  autoPayEnabled    Boolean      @default(false) @map("auto_pay_enabled")
+
+  // Relations
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+  tickets           SupportTicket[]
+  devices           CustomerDevice[]
+  onuDevices        OnuDevice[]
+  usageLogs         UsageLog[]
+  technician        Staff?       @relation(fields: [technicianId], references: [id])
+
+  @@index([customerCode])
+  @@index([zone, area])
+  @@index([type])
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────────
+// STAFF & RBAC
+// ─────────────────────────────────────────────────
+
+model Staff {
+  id          String    @id @default(uuid())
+  userId      String    @unique @map("user_id")
+  employeeId  String    @unique @map("employee_id")  // EMP-001
+  role        StaffRole @default(TECHNICIAN)
+
+  // Work
+  department  String?
+  designation String?
+  zone        String?   // Assigned zone for technicians
+
+  // Contact
+  emergencyContact String? @map("emergency_contact")
+
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissions StaffPermission[]
+  assignedTickets SupportTicket[] @relation("AssignedTechnician")
+  customers   Customer[]
+
+  @@index([employeeId])
+  @@index([role])
+  @@index([zone])
+  @@map("staff")
+}
+
+model Permission {
+  id          String    @id @default(uuid())
+  resource    String    // customers, invoices, routers, etc.
+  action      String    // read, create, update, delete, reboot, etc.
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  staffPermissions StaffPermission[]
+
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model StaffPermission {
+  id          String @id @default(uuid())
+  staffId     String @map("staff_id")
+  permissionId String @map("permission_id")
+
+  staff       Staff       @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  permission  Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, permissionId])
+  @@map("staff_permissions")
+}
+
+// ─────────────────────────────────────────────────
+// INTERNET PACKAGES
+// ─────────────────────────────────────────────────
+
+model InternetPackage {
+  id              String            @id @default(uuid())
+  code            String            @unique  // PKG-50M
+  name            String            // "Fiber 50 Mbps"
+  nameBn          String?           @map("name_bn")  // Bangla name
+  type            InternetPackageType @default(FTTH)
+
+  // Speed
+  downloadSpeed   Int               @map("download_speed")  // Mbps
+  uploadSpeed     Int               @map("upload_speed")    // Mbps
+  burstLimit      Int?              @map("burst_limit")      // Mbps
+  burstThreshold  Int?              @map("burst_threshold")  // Mbps
+
+  // Pricing
+  monthlyPrice    Decimal           @map("monthly_price") @db.Decimal(10, 2)
+  installationFee Decimal?          @map("installation_fee") @db.Decimal(10, 2)
+  securityDeposit Decimal?          @map("security_deposit") @db.Decimal(10, 2)
+
+  // Features
+  isGamingOptimized Boolean         @default(false) @map("is_gaming_optimized")
+  isStreamingOptimized Boolean      @default(false) @map("is_streaming_optimized")
+  ipType          String            @default("dynamic")  // dynamic, static, pppoe
+
+  // Limits
+  dataCap         BigInt?           @map("data_cap")  // GB, null = unlimited
+  fupLimit        BigInt?           @map("fup_limit")  // Fair usage policy
+
+  // Status
+  isActive        Boolean           @default(true) @map("is_active")
+  isPromotional   Boolean           @default(false) @map("is_promotional")
+  displayOrder    Int               @default(0) @map("display_order")
+
+  // Metadata
+  description     String?
+  descriptionBn   String?           @map("description_bn")
+  tags            String[]          // ["gaming", "4k-streaming"]
+
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  deletedAt       DateTime?         @map("deleted_at")
+
+  // Relations
+  subscriptions   Subscription[]
+
+  @@index([type, isActive])
+  @@index([monthlyPrice])
+  @@map("internet_packages")
+}
+
+// ─────────────────────────────────────────────────
+// SUBSCRIPTIONS
+// ─────────────────────────────────────────────────
+
+model Subscription {
+  id              String             @id @default(uuid())
+  customerId      String             @map("customer_id")
+  packageId       String             @map("package_id")
+
+  // PPPoE / Network
+  pppoeUsername   String             @unique @map("pppoe_username")
+  pppoePassword   String             @map("pppoe_password")  // Encrypted
+  ipAddress       String?            @map("ip_address")
+  macAddress      String?            @map("mac_address")
+
+  // Status
+  status          SubscriptionStatus @default(PENDING_ACTIVATION)
+  activatedAt     DateTime?          @map("activated_at")
+  suspendedAt     DateTime?          @map("suspended_at")
+  terminatedAt    DateTime?          @map("terminated_at")
+
+  // Billing
+  billingCycle    Int                @default(1) @map("billing_cycle")
+  nextBillingDate DateTime?          @map("next_billing_date")
+
+  // Relations
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  package         InternetPackage    @relation(fields: [packageId], references: [id])
+  invoices        Invoice[]
+  usageLogs       UsageLog[]
+
+  @@index([customerId])
+  @@index([pppoeUsername])
+  @@index([status])
+  @@index([nextBillingDate])
+  @@map("subscriptions")
+}
+
+// ─────────────────────────────────────────────────
+// BILLING: INVOICES & PAYMENTS
+// ─────────────────────────────────────────────────
+
+model Invoice {
+  id              String        @id @default(uuid())
+  invoiceNumber   String        @unique @map("invoice_number")  // INV-2026-0001
+  customerId      String        @map("customer_id")
+  subscriptionId  String        @map("subscription_id")
+
+  // Period
+  billingPeriodStart DateTime   @map("billing_period_start")
+  billingPeriodEnd   DateTime   @map("billing_period_end")
+  dueDate         DateTime      @map("due_date")
+
+  // Amounts
+  subtotal        Decimal       @db.Decimal(10, 2)
+  discount        Decimal       @default(0) @db.Decimal(10, 2)
+  tax             Decimal       @default(0) @db.Decimal(10, 2)
+  total           Decimal       @db.Decimal(10, 2)
+  paidAmount      Decimal       @default(0) @map("paid_amount") @db.Decimal(10, 2)
+
+  // Status
+  status          InvoiceStatus @default(DRAFT)
+
+  // Metadata
+  notes           String?
+  sentAt          DateTime?     @map("sent_at")
+  paidAt          DateTime?     @map("paid_at")
+
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  deletedAt       DateTime?     @map("deleted_at")
+
+  // Relations
+  customer        Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription    Subscription  @relation(fields: [subscriptionId], references: [id])
+  items           InvoiceItem[]
+  payments        Payment[]
+
+  @@index([customerId, createdAt])
+  @@index([status, dueDate])
+  @@index([invoiceNumber])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String   @map("invoice_id")
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(10, 2)
+  amount      Decimal  @db.Decimal(10, 2)
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  invoiceId       String        @map("invoice_id")
+
+  // Transaction
+  transactionId   String?       @unique @map("transaction_id")  // Gateway transaction ID
+  gateway         PaymentMethod
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("BDT")
+
+  // Status
+  status          PaymentStatus @default(PENDING)
+
+  // Gateway Response
+  gatewayResponse Json?         @map("gateway_response")
+  verifiedAt      DateTime?     @map("verified_at")
+
+  // Refund
+  refundedAmount  Decimal?      @map("refunded_amount") @db.Decimal(10, 2)
+  refundReason    String?       @map("refund_reason")
+
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  invoice         Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([transactionId])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────────
+// SUPPORT TICKET SYSTEM
+// ─────────────────────────────────────────────────
+
+model SupportTicket {
+  id              String         @id @default(uuid())
+  ticketNumber    String         @unique @map("ticket_number")  // TKT-2026-0001
+  customerId      String         @map("customer_id")
+
+  // Classification
+  category        TicketCategory
+  priority        TicketPriority @default(MEDIUM)
+  status          TicketStatus   @default(OPEN)
+
+  // Content
+  subject         String
+  description     String         @db.Text
+
+  // SLA
+  slaDeadline     DateTime?      @map("sla_deadline")
+  slaBreached     Boolean        @default(false) @map("sla_breached")
+
+  // Assignment
+  assignedToId    String?        @map("assigned_to_id")
+  assignedAt      DateTime?      @map("assigned_at")
+
+  // Resolution
+  resolution      String?        @db.Text
+  resolvedAt      DateTime?      @map("resolved_at")
+  resolvedById    String?        @map("resolved_by_id")
+
+  // Relations
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo      Staff?         @relation("AssignedTechnician", fields: [assignedToId], references: [id])
+  messages        TicketMessage[]
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  deletedAt       DateTime?      @map("deleted_at")
+
+  @@index([customerId, createdAt])
+  @@index([status, priority])
+  @@index([assignedToId])
+  @@index([ticketNumber])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id          String   @id @default(uuid())
+  ticketId    String   @map("ticket_id")
+  senderId    String   @map("sender_id")  // User ID
+  senderType  String   @map("sender_type") // CUSTOMER, STAFF, SYSTEM
+
+  content     String   @db.Text
+  isInternal  Boolean  @default(false) @map("is_internal")  // Internal notes
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+model TicketAttachment {
+  id          String   @id @default(uuid())
+  ticketId    String   @map("ticket_id")
+  messageId   String?  @map("message_id")
+  fileName    String   @map("file_name")
+  fileUrl     String   @map("file_url")
+  fileSize    Int      @map("file_size")
+  mimeType    String   @map("mime_type")
+  uploadedBy  String   @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId])
+  @@map("ticket_attachments")
+}
+
+// ─────────────────────────────────────────────────
+// NETWORK: ROUTERS, POP, ONU
+// ─────────────────────────────────────────────────
+
+model Pop {
+  id          String   @id @default(uuid())
+  code        String   @unique  // POP-DHK-01
+  name        String
+  address     String?
+  latitude    Float?
+  longitude   Float?
+  status      DeviceStatus @default(ONLINE)
+
+  // Capacity
+  totalPorts  Int      @default(0) @map("total_ports")
+  usedPorts   Int      @default(0) @map("used_ports")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  routers     MikroTikRouter[]
+  coverageZones CoverageZone[]
+
+  @@index([status])
+  @@map("pops")
+}
+
+model MikroTikRouter {
+  id              String       @id @default(uuid())
+  popId           String       @map("pop_id")
+  name            String
+  ipAddress       String       @map("ip_address")
+  apiPort         Int          @default(8728) @map("api_port")
+  sshPort         Int          @default(22) @map("ssh_port")
+
+  // Credentials (encrypted)
+  username        String
+  password        String       // AES-256 encrypted
+
+  // Status
+  status          DeviceStatus @default(ONLINE)
+  lastSeenAt      DateTime?    @map("last_seen_at")
+
+  // Hardware
+  model           String?
+  serialNumber    String?      @map("serial_number")
+  firmware        String?
+
+  // Resources
+  cpuUsage        Float?       @map("cpu_usage")
+  memoryUsage     Float?       @map("memory_usage")
+  totalMemory     BigInt?      @map("total_memory")
+
+  // Config
+  configBackup    Json?        @map("config_backup")
+
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  deletedAt       DateTime?    @map("deleted_at")
+
+  pop             Pop          @relation(fields: [popId], references: [id])
+  pppoeUsers      PppoeSession[]
+
+  @@index([popId])
+  @@index([status])
+  @@map("mikrotik_routers")
+}
+
+model PppoeSession {
+  id            String   @id @default(uuid())
+  routerId      String   @map("router_id")
+  username      String
+  ipAddress     String?  @map("ip_address")
+  macAddress    String?  @map("mac_address")
+
+  // Status
+  isOnline      Boolean  @default(false) @map("is_online")
+  connectedAt   DateTime? @map("connected_at")
+  disconnectedAt DateTime? @map("disconnected_at")
+
+  // Bandwidth
+  downloadBytes BigInt   @default(0) @map("download_bytes")
+  uploadBytes   BigInt   @default(0) @map("upload_bytes")
+  currentSpeed  Json?    @map("current_speed")  // {up: 10, down: 50}
+
+  // Queue
+  queueName     String?  @map("queue_name")
+  queueType     String?  @map("queue_type")  // simple, pcq
+
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  router        MikroTikRouter @relation(fields: [routerId], references: [id], onDelete: Cascade)
+
+  @@index([routerId, isOnline])
+  @@index([username])
+  @@map("pppoe_sessions")
+}
+
+model OnuDevice {
+  id              String     @id @default(uuid())
+  customerId      String     @map("customer_id")
+
+  // ONU Identity
+  serialNumber    String     @unique @map("serial_number")
+  oltId           String     @map("olt_id")  // OLT reference
+  ponPort         Int        @map("pon_port")
+  onuId           Int        @map("onu_id")  // ONU index on PON
+
+  // Status
+  status          OnuStatus  @default(UNKNOWN)
+  lastSeenAt      DateTime?  @map("last_seen_at")
+
+  // Optical Power
+  rxPower         Float?     @map("rx_power")  // dBm
+  txPower         Float?     @map("tx_power")  // dBm
+  oltRxPower      Float?     @map("olt_rx_power")
+
+  // Distance
+  fiberDistance   Float?     @map("fiber_distance")  // km
+
+  // History
+  signalHistory   Json[]     @map("signal_history")  // [{timestamp, rx, tx}]
+
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  customer        Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([status])
+  @@index([oltId, ponPort])
+  @@map("onu_devices")
+}
+
+// ─────────────────────────────────────────────────
+// COVERAGE & NETWORK PLANNING
+// ─────────────────────────────────────────────────
+
+model CoverageZone {
+  id          String         @id @default(uuid())
+  popId       String         @map("pop_id")
+  name        String
+  nameBn      String?        @map("name_bn")
+
+  // Geometry (GeoJSON Polygon)
+  boundary    Json           // {type: "Polygon", coordinates: [...]}
+  centerLat   Float          @map("center_lat")
+  centerLng   Float          @map("center_lng")
+
+  // Status
+  status      CoverageStatus @default(PLANNED)
+
+  // Availability
+  isAvailable Boolean        @default(false) @map("is_available")
+  expectedDate DateTime?     @map("expected_date")
+
+  // Marketing
+  description String?
+  imageUrl    String?        @map("image_url")
+
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  pop         Pop            @relation(fields: [popId], references: [id])
+
+  @@index([status])
+  @@index([isAvailable])
+  @@map("coverage_zones")
+}
+
+// ─────────────────────────────────────────────────
+// USAGE & MONITORING
+// ─────────────────────────────────────────────────
+
+model UsageLog {
+  id              String   @id @default(uuid())
+  customerId      String   @map("customer_id")
+  subscriptionId  String   @map("subscription_id")
+
+  // Time bucket (hourly aggregation)
+  hour            DateTime // Truncated to hour
+
+  // Data
+  downloadBytes   BigInt   @map("download_bytes")
+  uploadBytes     BigInt   @map("upload_bytes")
+  totalBytes      BigInt   @map("total_bytes")
+
+  // Peak
+  peakDownloadSpeed Float? @map("peak_download_speed")  // Mbps
+  peakUploadSpeed   Float? @map("peak_upload_speed")    // Mbps
+
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  customer        Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([subscriptionId, hour])
+  @@index([customerId, hour])
+  @@index([hour])
+  @@map("usage_logs")
+}
+
+// ─────────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────────
+
+model Notification {
+  id          String             @id @default(uuid())
+  userId      String             @map("user_id")
+
+  // Content
+  title       String
+  message     String             @db.Text
+  titleBn     String?            @map("title_bn")
+  messageBn   String?            @map("message_bn") @db.Text
+
+  // Delivery
+  channel     NotificationChannel
+  status      NotificationStatus @default(PENDING)
+
+  // Metadata
+  actionUrl   String?            @map("action_url")
+  actionType  String?            @map("action_type")  // PAY_BILL, VIEW_TICKET, etc.
+
+  // Tracking
+  sentAt      DateTime?          @map("sent_at")
+  deliveredAt DateTime?          @map("delivered_at")
+  readAt      DateTime?          @map("read_at")
+  error       String?
+
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────
+// MAINTENANCE & SYSTEM
+// ─────────────────────────────────────────────────
+
+model MaintenanceWindow {
+  id          String          @id @default(uuid())
+  type        MaintenanceType
+
+  // Schedule
+  startTime   DateTime        @map("start_time")
+  endTime     DateTime        @map("end_time")
+
+  // Scope
+  affectedZones String[]      @map("affected_zones")
+  affectedPops  String[]      @map("affected_pops")
+
+  // Content
+  title       String
+  description String            @db.Text
+  titleBn     String?           @map("title_bn")
+  descriptionBn String?         @map("description_bn") @db.Text
+
+  // Status
+  isNotified  Boolean           @default(false) @map("is_notified")
+  completedAt DateTime?         @map("completed_at")
+
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@index([startTime])
+  @@index([type])
+  @@map("maintenance_windows")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?  @map("user_id")
+  action      LogAction
+
+  // Target
+  entityType  String   @map("entity_type")  // customer, invoice, router
+  entityId    String   @map("entity_id")
+
+  // Change
+  oldValue    Json?    @map("old_value")
+  newValue    Json?    @map("new_value")
+
+  // Context
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────
+// CUSTOMER DEVICES (Router/CPE)
+// ─────────────────────────────────────────────────
+
+model CustomerDevice {
+  id          String   @id @default(uuid())
+  customerId  String   @map("customer_id")
+
+  // Device Info
+  name        String   @default("Home Router")
+  macAddress  String   @map("mac_address")
+  ipAddress   String?  @map("ip_address")
+  type        String   @default("router")  // router, mesh, extender
+  brand       String?
+  model       String?
+
+  // Status
+  isOnline    Boolean  @default(false) @map("is_online")
+  lastSeenAt  DateTime? @map("last_seen_at")
+
+  // Management
+  canReboot   Boolean  @default(false) @map("can_reboot")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_devices")
+}
